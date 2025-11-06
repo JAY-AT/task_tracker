@@ -1,15 +1,17 @@
-import sys
+import tkinter as tk
+from tkinter import ttk, messagebox
 import json
 import os
 from datetime import datetime
 
-TASKS_FILE = "tasks.json"
-BASE_DIR = os.path.dirname(__file__)
+# ====== FILE SETUP ======
+BASE_DIR = r"C:\Users\entil\task-tracker\program_files"
+os.makedirs(BASE_DIR, exist_ok=True)
 TASKS_FILE = os.path.join(BASE_DIR, "tasks.json")
 
 
+# ====== TASK FUNCTIONS ======
 def load_tasks():
-    """Load tasks from JSON file or return an empty list."""
     if not os.path.exists(TASKS_FILE):
         return []
     with open(TASKS_FILE, "r") as f:
@@ -18,159 +20,213 @@ def load_tasks():
         except json.JSONDecodeError:
             return []
 
+
 def save_tasks(tasks):
-    """Save tasks to JSON file."""
     with open(TASKS_FILE, "w") as f:
         json.dump(tasks, f, indent=4)
 
+
 def get_new_id(tasks):
-    """Generate a new unique ID."""
     if not tasks:
         return 1
     return max(task["id"] for task in tasks) + 1
 
-def find_task(tasks, task_id):
-    """Find a task by ID."""
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
-    return None
 
-def print_task(task):
-    """Print a single task in a nice format."""
-    print(f"[{task['id']}] {task['description']} - {task['status']} "
-          f"(Created: {task['createdAt']}, Updated: {task['updatedAt']})")
+# ====== GUI CLASS ======
+class TaskGUI(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Task Tracker")
+        self.geometry("900x600")
+        self.configure(bg="#0f172a")
+        self.editing_task_id = None  # Tracks if updating task
+        self.create_widgets()
+        self.load_task_list()
 
+    def create_widgets(self):
+        # Colors
+        accent = "#38bdf8"
+        text_light = "#e2e8f0"
+        text_dim = "#94a3b8"
 
-def add_task(description):
-    tasks = load_tasks()
-    new_task = {
-        "id": get_new_id(tasks),
-        "description": description,
-        "status": "todo",
-        "createdAt": datetime.now().isoformat(timespec='seconds'),
-        "updatedAt": datetime.now().isoformat(timespec='seconds')
-    }
-    tasks.append(new_task)
-    save_tasks(tasks)
-    print(f"✅ Task added successfully (ID: {new_task['id']})")
+        # Header
+        header = tk.Label(
+            self, text="⚡ Task Tracker", font=("Segoe UI", 22, "bold"),
+            bg="#0f172a", fg=accent
+        )
+        header.pack(pady=(15, 5))
 
-def update_task(task_id, new_description):
-    tasks = load_tasks()
-    task = find_task(tasks, task_id)
-    if not task:
-        print("❌ Task not found.")
-        return
-    task["description"] = new_description
-    task["updatedAt"] = datetime.now().isoformat(timespec='seconds')
-    save_tasks(tasks)
-    print("✏️ Task updated successfully.")
+        # Instruction
+        instruction = tk.Label(
+            self, text="Type your task below and press 'Add/Update Task' or Enter.",
+            font=("Segoe UI", 10), bg="#0f172a", fg=text_dim
+        )
+        instruction.pack(pady=(0, 10))
 
-def delete_task(task_id):
-    tasks = load_tasks()
-    task = find_task(tasks, task_id)
-    if not task:
-        print("❌ Task not found.")
-        return
-    tasks = [t for t in tasks if t["id"] != task_id]
-    save_tasks(tasks)
-    print("🗑️ Task deleted successfully.")
+        # Input frame
+        input_frame = tk.Frame(self, bg="#0f172a")
+        input_frame.pack(pady=5)
 
-def mark_task(task_id, status):
-    tasks = load_tasks()
-    task = find_task(tasks, task_id)
-    if not task:
-        print("❌ Task not found.")
-        return
-    task["status"] = status
-    task["updatedAt"] = datetime.now().isoformat(timespec='seconds')
-    save_tasks(tasks)
-    print(f"🔄 Task marked as '{status}'.")
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Custom.TEntry", fieldbackground="#1e293b",
+            foreground=text_light, borderwidth=0, relief="flat", padding=8
+        )
+        style.configure(
+            "Custom.TButton", background=accent, foreground="#0f172a",
+            font=("Segoe UI", 10, "bold"), padding=6
+        )
+        style.map("Custom.TButton",
+                  background=[("active", "#0ea5e9"), ("!active", "#38bdf8")])
 
-def list_tasks(filter_status=None):
-    tasks = load_tasks()
-    if not tasks:
-        print("📭 No tasks found.")
-        return
-    filtered = tasks
-    if filter_status:
-        filtered = [t for t in tasks if t["status"] == filter_status]
-        if not filtered:
-            print(f"📭 No tasks with status '{filter_status}'.")
+        style.configure(
+            "Treeview", background="#1e293b", foreground=text_light,
+            fieldbackground="#1e293b", rowheight=25, font=("Segoe UI", 10)
+        )
+        style.configure("Treeview.Heading", background=accent, foreground="#0f172a",
+                        font=("Segoe UI", 10, "bold"))
+        style.map("Treeview", background=[("selected", "#0ea5e9")],
+                  foreground=[("selected", "#0f172a")])
+
+        # Entry
+        self.desc_entry = ttk.Entry(input_frame, width=45, style="Custom.TEntry")
+        self.desc_entry.pack(side=tk.LEFT, padx=5)
+        self.desc_entry.focus()
+        self.desc_entry.bind("<Return>", lambda e: self.add_or_update_task())
+
+        # Add/Update button
+        add_btn = ttk.Button(input_frame, text="➕ Add/Update Task", command=self.add_or_update_task, style="Custom.TButton")
+        add_btn.pack(side=tk.LEFT, padx=5)
+
+        # Task table
+        columns = ("id", "description", "status", "createdAt", "updatedAt")
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=14)
+        for col in columns:
+            self.tree.heading(col, text=col.capitalize())
+            self.tree.column(col, anchor="center")
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+
+        # Buttons frame
+        btn_frame = tk.Frame(self, bg="#0f172a")
+        btn_frame.pack(pady=10)
+
+        btns = [
+            ("🚀 In Progress", lambda: self.update_status("in-progress")),
+            ("✅ Mark Done", lambda: self.update_status("done")),
+            ("✏️ Update Task", self.prepare_update_task),
+            ("🗑 Delete Task", self.delete_task),
+            ("🔄 Refresh", self.load_task_list)
+        ]
+        for i, (label, cmd) in enumerate(btns):
+            btn = ttk.Button(btn_frame, text=label, command=cmd, style="Custom.TButton")
+            btn.grid(row=0, column=i, padx=6)
+
+        # Filter frame
+        filter_frame = tk.Frame(self, bg="#0f172a")
+        filter_frame.pack(pady=(10, 10))
+        tk.Label(filter_frame, text="Filter by:", bg="#0f172a", fg=text_light,
+                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        self.status_filter = ttk.Combobox(
+            filter_frame, values=["All", "todo", "in-progress", "done"],
+            state="readonly", width=15
+        )
+        self.status_filter.set("All")
+        self.status_filter.pack(side=tk.LEFT, padx=5)
+        ttk.Button(filter_frame, text="Apply", command=self.load_task_list, style="Custom.TButton").pack(side=tk.LEFT, padx=5)
+
+    # ====== Task Operations ======
+    def load_task_list(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        tasks = load_tasks()
+        status_filter = self.status_filter.get()
+        for idx, t in enumerate(tasks):
+            if status_filter != "All" and t["status"] != status_filter:
+                continue
+            tag = "evenrow" if idx % 2 == 0 else "oddrow"
+            self.tree.insert("", tk.END, values=(t["id"], t["description"], t["status"],
+                                                 t["createdAt"], t["updatedAt"]), tags=(tag,))
+        self.tree.tag_configure('oddrow', background="#1e293b")
+        self.tree.tag_configure('evenrow', background="#161e2a")
+
+    def add_or_update_task(self):
+        desc = self.desc_entry.get().strip()
+        if not desc:
+            messagebox.showwarning("Warning", "Task description cannot be empty.")
             return
-    for t in filtered:
-        print_task(t)
 
+        tasks = load_tasks()
 
-def show_help():
-    print("""
-📘 Task Tracker CLI Usage:
----------------------------
-Add a new task:
-    python task-cli.py add "Task description"
-
-Update a task:
-    python task-cli.py update <id> "New description"
-
-Delete a task:
-    python task-cli.py delete <id>
-
-Mark a task as in-progress or done:
-    python task-cli.py mark-in-progress <id>
-    python task-cli.py mark-done <id>
-
-List all tasks:
-    python task-cli.py list
-
-List tasks by status:
-    python task-cli.py list todo
-    python task-cli.py list in-progress
-    python task-cli.py list done
-""")
-
-def main():
-    if len(sys.argv) < 2:
-        show_help()
-        return
-
-    command = sys.argv[1]
-
-    if command == "add" and len(sys.argv) >= 3:
-        description = " ".join(sys.argv[2:])
-        add_task(description)
-    elif command == "update" and len(sys.argv) >= 4:
-        try:
-            task_id = int(sys.argv[2])
-            description = " ".join(sys.argv[3:])
-            update_task(task_id, description)
-        except ValueError:
-            print("❌ Invalid task ID.")
-    elif command == "delete" and len(sys.argv) == 3:
-        try:
-            delete_task(int(sys.argv[2]))
-        except ValueError:
-            print("❌ Invalid task ID.")
-    elif command == "mark-in-progress" and len(sys.argv) == 3:
-        try:
-            mark_task(int(sys.argv[2]), "in-progress")
-        except ValueError:
-            print("❌ Invalid task ID.")
-    elif command == "mark-done" and len(sys.argv) == 3:
-        try:
-            mark_task(int(sys.argv[2]), "done")
-        except ValueError:
-            print("❌ Invalid task ID.")
-    elif command == "list":
-        if len(sys.argv) == 3:
-            status = sys.argv[2]
-            if status not in ["todo", "in-progress", "done"]:
-                print("❌ Invalid status. Use: todo, in-progress, done.")
-                return
-            list_tasks(status)
+        if self.editing_task_id is None:
+            # Add new task
+            new_task = {
+                "id": get_new_id(tasks),
+                "description": desc,
+                "status": "todo",
+                "createdAt": datetime.now().isoformat(timespec='seconds'),
+                "updatedAt": datetime.now().isoformat(timespec='seconds')
+            }
+            tasks.append(new_task)
         else:
-            list_tasks()
-    else:
-        show_help()
+            # Update existing task
+            for idx, t in enumerate(tasks):
+                if t["id"] == self.editing_task_id:
+                    t["description"] = desc
+                    t["updatedAt"] = datetime.now().isoformat(timespec='seconds')
+                    tasks[idx] = t
+                    break
+            self.editing_task_id = None
 
+        save_tasks(tasks)
+        self.desc_entry.delete(0, tk.END)
+        self.load_task_list()
+
+    def get_selected_task(self):
+        selected = self.tree.focus()
+        if not selected:
+            messagebox.showwarning("Warning", "No task selected.")
+            return None
+        values = self.tree.item(selected, "values")
+        tasks = load_tasks()
+        for t in tasks:
+            if t["id"] == int(values[0]):
+                return t
+        return None
+
+    def update_status(self, status):
+        task = self.get_selected_task()
+        if not task:
+            return
+        task["status"] = status
+        task["updatedAt"] = datetime.now().isoformat(timespec='seconds')
+        tasks = load_tasks()
+        for idx, t in enumerate(tasks):
+            if t["id"] == task["id"]:
+                tasks[idx] = task
+        save_tasks(tasks)
+        self.load_task_list()
+
+    def prepare_update_task(self):
+        task = self.get_selected_task()
+        if not task:
+            return
+        self.editing_task_id = task["id"]
+        self.desc_entry.delete(0, tk.END)
+        self.desc_entry.insert(0, task["description"])
+        self.desc_entry.focus()
+
+    def delete_task(self):
+        task = self.get_selected_task()
+        if not task:
+            return
+        tasks = load_tasks()
+        tasks = [t for t in tasks if t["id"] != task["id"]]
+        save_tasks(tasks)
+        self.load_task_list()
+
+
+# ====== RUN APP ======
 if __name__ == "__main__":
-    main()
+    app = TaskGUI()
+    app.mainloop()
