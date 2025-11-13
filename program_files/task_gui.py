@@ -1,11 +1,16 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+from PIL import Image, ImageDraw
+import pystray
+import threading
+
+PH_TZ = timezone(timedelta(hours=8))  # UTC+8 for Philippines
+
 
 # ====== FILE SETUP ======
-# Fixed folder path (change this to wherever you want your tasks.json to live)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TASKS_FILE = os.path.join(BASE_DIR, "tasks.json")
 
@@ -28,6 +33,7 @@ def get_new_id(tasks):
         return 1
     return max(task["id"] for task in tasks) + 1
 
+
 # ====== GUI CLASS ======
 class TaskGUI(tk.Tk):
     def __init__(self):
@@ -35,30 +41,30 @@ class TaskGUI(tk.Tk):
         self.title("Task Tracker")
         self.geometry("900x600")
         self.configure(bg="#0f172a")
+
+        self.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
+        self.icon = None  # tray icon instance
+
         self.create_widgets()
         self.load_task_list()
 
     def create_widgets(self):
-        # Colors
         accent = "#38bdf8"
         text_light = "#e2e8f0"
         text_dim = "#94a3b8"
 
-        # Header
         header = tk.Label(
             self, text="⚡ Task Tracker", font=("Segoe UI", 22, "bold"),
             bg="#0f172a", fg=accent
         )
         header.pack(pady=(15, 5))
 
-        # Instruction
         instruction = tk.Label(
             self, text="Type your task below and click 'Add Task' or press Enter.",
             font=("Segoe UI", 10), bg="#0f172a", fg=text_dim
         )
         instruction.pack(pady=(0, 10))
 
-        # Input frame
         input_frame = tk.Frame(self, bg="#0f172a")
         input_frame.pack(pady=5)
 
@@ -73,7 +79,7 @@ class TaskGUI(tk.Tk):
             font=("Segoe UI", 10, "bold"), padding=6
         )
         style.map("Custom.TButton",
-          background=[("active", "#0ea5e9"), ("!active", "#38bdf8")])
+            background=[("active", "#0ea5e9"), ("!active", "#38bdf8")])
 
         style.configure(
             "Treeview", background="#1e293b", foreground=text_light,
@@ -84,17 +90,14 @@ class TaskGUI(tk.Tk):
         style.map("Treeview", background=[("selected", "#0ea5e9")],
                   foreground=[("selected", "#0f172a")])
 
-        # Entry
         self.desc_entry = ttk.Entry(input_frame, width=45, style="Custom.TEntry")
         self.desc_entry.pack(side=tk.LEFT, padx=5)
         self.desc_entry.focus()
         self.desc_entry.bind("<Return>", lambda e: self.add_task())
 
-        # Add button
         add_btn = ttk.Button(input_frame, text="➕ Add/Update Task", command=self.add_task, style="Custom.TButton")
         add_btn.pack(side=tk.LEFT, padx=5)
 
-        # Task table
         columns = ("id", "description", "status", "createdAt", "updatedAt")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", height=14)
         for col in columns:
@@ -102,7 +105,6 @@ class TaskGUI(tk.Tk):
             self.tree.column(col, anchor="center")
         self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
 
-        # Buttons frame
         btn_frame = tk.Frame(self, bg="#0f172a")
         btn_frame.pack(pady=10)
 
@@ -117,7 +119,6 @@ class TaskGUI(tk.Tk):
             btn = ttk.Button(btn_frame, text=label, command=cmd, style="Custom.TButton")
             btn.grid(row=0, column=i, padx=6)
 
-        # Filter frame
         filter_frame = tk.Frame(self, bg="#0f172a")
         filter_frame.pack(pady=(10, 10))
         tk.Label(filter_frame, text="Filter by:", bg="#0f172a", fg=text_light,
@@ -130,7 +131,6 @@ class TaskGUI(tk.Tk):
         self.status_filter.pack(side=tk.LEFT, padx=5)
         ttk.Button(filter_frame, text="Apply", command=self.load_task_list, style="Custom.TButton").pack(side=tk.LEFT, padx=5)
 
-    # ====== Task Operations ======
     def load_task_list(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
@@ -155,8 +155,8 @@ class TaskGUI(tk.Tk):
             "id": get_new_id(tasks),
             "description": desc,
             "status": "todo",
-            "createdAt": datetime.now().isoformat(timespec='seconds'),
-            "updatedAt": datetime.now().isoformat(timespec='seconds')
+            "createdAt": datetime.now(PH_TZ).isoformat(timespec='seconds'),
+            "updatedAt": datetime.now(PH_TZ).isoformat(timespec='seconds')
         }
         tasks.append(new_task)
         save_tasks(tasks)
@@ -214,6 +214,39 @@ class TaskGUI(tk.Tk):
         tasks = [t for t in tasks if t["id"] != task["id"]]
         save_tasks(tasks)
         self.load_task_list()
+
+    # ====== TRAY ICON ======
+    def minimize_to_tray(self):
+        """Hide the main window and show tray icon"""
+        self.withdraw()
+        image = self.create_icon_image()
+
+        menu = (
+            pystray.MenuItem("Show Task Tracker", self.restore_from_tray),
+            pystray.MenuItem("Exit", self.exit_from_tray)
+        )
+        self.icon = pystray.Icon("TaskTracker", image, "Task Tracker", menu)
+        threading.Thread(target=self.icon.run, daemon=True).start()
+
+    def restore_from_tray(self, icon=None, item=None):
+        """Restore the window from tray"""
+        if self.icon:
+            self.icon.stop()
+        self.deiconify()
+
+    def exit_from_tray(self, icon=None, item=None):
+        """Completely exit the app"""
+        if self.icon:
+            self.icon.stop()
+        self.destroy()
+
+    def create_icon_image(self, color="#38bdf8", size=64):
+        """Create a simple tray icon image"""
+        image = Image.new("RGB", (size, size), color)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, size, size), fill=color)
+        draw.text((size//4, size//4), "⚡", fill="white")
+        return image
 
 
 # ====== RUN APP ======
